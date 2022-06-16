@@ -36,10 +36,24 @@ the server certificate's chain of trust. Data retrieved from servers not under
 your control should be treated as untrustworthy.`,
 
 		Attributes: map[string]tfsdk.Attribute{
+			"id": {
+				Description: "The ID of this resource.",
+				Type:        types.StringType,
+				Computed:    true,
+			},
+
 			"url": {
 				Description: "The URL for the request. Supported schemes are `http` and `https`.",
 				Type:        types.StringType,
 				Required:    true,
+			},
+
+			"method": {
+				Description: "The HTTP Method for the request. " +
+					"Allowed methods are a subset of methods defined in [RFC7231](https://datatracker.ietf.org/doc/html/rfc7231#section-4.3) namely, " +
+					"`GET`, `POST`, `PUT`, `PATCH` and `DELETE`.",
+				Type:     types.StringType,
+				Optional: true,
 			},
 
 			"request_headers": {
@@ -48,6 +62,12 @@ your control should be treated as untrustworthy.`,
 					ElemType: types.StringType,
 				},
 				Optional: true,
+			},
+
+			"request_body": {
+				Description: "The request body as a string.",
+				Type:        types.StringType,
+				Optional:    true,
 			},
 
 			"response_body": {
@@ -70,12 +90,6 @@ your control should be treated as untrustworthy.`,
 				Type:        types.Int64Type,
 				Computed:    true,
 			},
-
-			"id": {
-				Description: "The ID of this resource.",
-				Type:        types.StringType,
-				Computed:    true,
-			},
 		},
 	}, nil
 }
@@ -95,7 +109,9 @@ var _ tfsdk.DataSource = (*dataSourceHTTP)(nil)
 type HTTPModel struct {
 	ID              types.String `tfsdk:"id"`
 	URL             types.String `tfsdk:"url"`
+	Method          types.String `tfsdk:"method"`
 	RequestHeaders  types.Map    `tfsdk:"request_headers"`
+	RequestBody     types.String `tfsdk:"request_body"`
 	ResponseHeaders types.Map    `tfsdk:"response_headers"`
 	ResponseBody    types.String `tfsdk:"response_body"`
 	StatusCode      types.Int64  `tfsdk:"status_code"`
@@ -110,11 +126,25 @@ func (d *dataSourceHTTP) Read(ctx context.Context, req tfsdk.ReadDataSourceReque
 	}
 
 	url := model.URL.Value
-	headers := model.RequestHeaders
+	method := model.Method.Value
+	requestHeaders := model.RequestHeaders
+	requestBody := strings.NewReader(model.RequestBody.Value)
+
+	if method == "" {
+		method = "GET"
+	}
+
+	if !isAllowedMethod(method) {
+		resp.Diagnostics.AddError(
+			"Method not allowed",
+			fmt.Sprintf("Method %q not allowed, must be one of: \"%s\".", method, strings.Join(allowedMethods, `", "`)),
+		)
+		return
+	}
 
 	client := &http.Client{}
 
-	request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	request, err := http.NewRequestWithContext(ctx, method, url, requestBody)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating request",
@@ -123,7 +153,7 @@ func (d *dataSourceHTTP) Read(ctx context.Context, req tfsdk.ReadDataSourceReque
 		return
 	}
 
-	for name, value := range headers.Elems {
+	for name, value := range requestHeaders.Elems {
 		var header string
 		diags = tfsdk.ValueAs(ctx, value, &header)
 		resp.Diagnostics.Append(diags...)
@@ -186,6 +216,18 @@ func (d *dataSourceHTTP) Read(ctx context.Context, req tfsdk.ReadDataSourceReque
 
 	diags = resp.State.Set(ctx, model)
 	resp.Diagnostics.Append(diags...)
+}
+
+var allowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+func isAllowedMethod(method string) bool {
+	for _, val := range allowedMethods {
+		if method == val {
+			return true
+		}
+	}
+
+	return false
 }
 
 // This is to prevent potential issues w/ binary files

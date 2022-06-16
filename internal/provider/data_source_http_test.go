@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -173,6 +174,118 @@ func TestDataSource_x509cert(t *testing.T) {
 	})
 }
 
+func TestDataSource_POST_201(t *testing.T) {
+	testHttpMock := setUpMockHttpServer()
+
+	defer testHttpMock.server.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+							data "http" "http_test" {
+ 								url = "%s/create"
+								method = "POST" 
+							}`, testHttpMock.server.URL),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("data.http.http_test", "response_body", "created"),
+					resource.TestCheckResourceAttr("data.http.http_test", "status_code", "201"),
+				),
+			},
+		},
+	})
+}
+
+func TestDataSource_PUT_201(t *testing.T) {
+	testHttpMock := setUpMockHttpServer()
+
+	defer testHttpMock.server.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+							data "http" "http_test" {
+ 								url = "%s/recreate"
+								method = "PUT" 
+							}`, testHttpMock.server.URL),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("data.http.http_test", "response_body", "recreated"),
+					resource.TestCheckResourceAttr("data.http.http_test", "status_code", "201"),
+				),
+			},
+		},
+	})
+}
+
+func TestDataSource_PATCH_200(t *testing.T) {
+	testHttpMock := setUpMockHttpServer()
+
+	defer testHttpMock.server.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+							data "http" "http_test" {
+ 								url = "%s/modified"
+								method = "PATCH" 
+							}`, testHttpMock.server.URL),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("data.http.http_test", "response_body", "modified"),
+					resource.TestCheckResourceAttr("data.http.http_test", "status_code", "200"),
+				),
+			},
+		},
+	})
+}
+
+func TestDataSource_DELETE_204(t *testing.T) {
+	testHttpMock := setUpMockHttpServer()
+
+	defer testHttpMock.server.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+							data "http" "http_test" {
+ 								url = "%s/deleted"
+								method = "DELETE" 
+							}`, testHttpMock.server.URL),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("data.http.http_test", "response_body", ""),
+					resource.TestCheckResourceAttr("data.http.http_test", "status_code", "204"),
+				),
+			},
+		},
+	})
+}
+
+func TestDataSource_UnsupportedMethod(t *testing.T) {
+	testHttpMock := setUpMockHttpServer()
+
+	defer testHttpMock.server.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+							data "http" "http_test" {
+ 								url = "%s/deleted"
+								method = "HEAD" 
+							}`, testHttpMock.server.URL),
+				ExpectError: regexp.MustCompile(`.*Method "HEAD" not allowed, must be one of: "GET", "POST", "PUT", "PATCH",\n"DELETE".`),
+			},
+		},
+	})
+}
+
 type TestHttpMock struct {
 	server *httptest.Server
 }
@@ -208,6 +321,25 @@ func setUpMockHttpServer() *TestHttpMock {
 				w.Header().Set("Content-Type", "application/x-x509-ca-cert")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("pem"))
+			case "/create":
+				if r.Method == "POST" {
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte("created"))
+				}
+			case "/recreate":
+				if r.Method == "PUT" {
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte("recreated"))
+				}
+			case "/modified":
+				if r.Method == "PATCH" {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("modified"))
+				}
+			case "/deleted":
+				if r.Method == "DELETE" {
+					w.WriteHeader(http.StatusNoContent)
+				}
 			default:
 				w.WriteHeader(http.StatusNotFound)
 			}
